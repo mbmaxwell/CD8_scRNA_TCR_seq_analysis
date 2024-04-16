@@ -1,0 +1,484 @@
+---
+title: "CD8+ T cell Dual scRNA/TCR-seq analysis"
+author: "Matt Maxwell"
+date: "`r Sys.Date()`"
+output: 
+  html_document: 
+   css: style.css
+   code folding: hide
+   hard_wrap: TRUE
+   theme: lumen
+   toc: TRUE 
+   toc_float: TRUE
+   fig_caption: yes
+---
+<style>
+.tocify {
+  font-size: 11pt;
+}
+
+.tocify-header .tocify-item {
+  font-size: 1.05em;
+  padding-left: 25px;
+  text-indent: 0;
+}
+
+p.caption {
+  font-size: 1.25em;
+  color: black
+}
+
+pre {
+  overflow-x: scroll
+}
+
+pre code {
+  white-space: pre;
+}
+
+body {
+  font-size: 12pt;
+}
+
+</style>
+
+### **scRNA/TCR-seq workflow for Maxwell et al Figures**
+This vignette reproduces figure panels from from Maxwell et al, 2024 Figure 2/S2 on CD8+ T cell scRNA and TCR sequencing using T cells sorted from wildtype (sgScramble) or ARID1A deficient (sg*Arid1a*) B16F10 tumors.  
+```{r import-data-load-packages, message=FALSE, hard_wrap=TRUE, warning=FALSE, echo=FALSE}
+#To set working directory
+wd <- ("/data/mmaxwell/sgArid1a_B16/Tumor/CD8_scRNA_TCR_seq")
+setwd(wd)
+
+
+#set this as our working directory for all R code chunks in this tutorial.
+#IGNORE if you're not using R markdown file
+knitr::opts_chunk$set(root.dir = wd)
+
+#Set preference for no warnings to be given when running code chunks in R markdown
+#IGNORE if you're not using R markdown file
+knitr::opts_chunk$set(warning = FALSE, message = FALSE) 
+
+```
+
+Load packages.
+```{r}
+#load packages with package manager package called pacman
+if (!require("pacman")) install.packages("pacman")
+pacman::p_load(here,  
+               Seurat, #Primary package for scRNA analysis
+               scDataviz, #UMAP density plot
+               cowplot, #arranging density plots on same plane
+               ggplot2, #plotting
+               dplyr, #data wrangling
+               ggpubfigs, #colorblind friendly color palettes 
+               scRepertoire, #scTCR analysis
+               SingleCellExperiment, #Make sce objects
+               scater, #single cell toolkit
+               Nebulosa, #Marker gene expression density
+               stringr,#Reformatting strings
+               forcats, #factors
+               WebGestaltR) #GSEA
+
+knitr::opts_chunk$set(echo = TRUE) #default setting is that code chunks output are visible 
+set.seed(123)  # Setting seed for reproducibility
+```
+
+## **CD8+ T cell UMAP (Figure 2D)**
+Import data and generate UMAP using [Seurat](https://satijalab.org/seurat/) DimPlot function with color blind friendly palette from the [ggpubfigs](https://github.com/JLSteenwyk/ggpubfigs) package.
+```{r}
+#import data
+dat.integrated <- readRDS("scRNA_CD8_B16F10.rds")
+
+#Seurat Dimplot function for UMAP
+DimPlot(dat.integrated, reduction = "umap", cols = friendly_pal("nickel_five"), label = TRUE, label.box = TRUE) + 
+  ggtitle("CD8+ T cell clusters") + theme(plot.title = element_text(hjust = 0.5))
+```
+
+## **Cluster Marker Gene Heatmap (Figure S2B)**
+Generating marker gene heatmap of top 10 marker genes from FindMarkers Seurat function for each cluster. The heatmap will look blurry when viewed in Rstudio, but has much higher resolution when viewed in a PDF viewer such as Adobe or Drawboard PDF.
+```{r}
+
+marker_genes <- read.delim("scRNA_marker_genes.txt", header = F)
+marker_genes <- marker_genes[, 1]
+  
+# Generating the heatmap
+heatmap_plot <- DoHeatmap(object = dat.integrated, features = marker_genes, group.colors = friendly_pal("nickel_five")) +
+  scale_fill_viridis_c(limits = c(-0.5, 1.5), oob = scales::squish) +
+  scale_y_discrete(position = "right")
+
+# Save the heatmap with specified dimensions
+ggsave("Marker_genes_heatmap.pdf", plot = heatmap_plot, width = 10, height = 14, device = "pdf")
+#View heatmap in PDF viewer
+```
+
+
+## **Marker Gene Expression Density (Figure S2C)**
+To visualize cluster marker gene expression, we use [Neubulosa](https://www.bioconductor.org/packages/release/bioc/vignettes/Nebulosa/inst/doc/introduction.html) package for gene weighted density visualization. This visualization is more sensitive to low expression than Seurat's FeaturePlot function and the plots are beuatiful. Below are Nebulosa density plots for C5 proliferation cluster genes Mki67 and Top2a.
+```{r}
+p5 <- plot_density(dat.integrated, c("Mki67", "Top2a"))
+print(p5)
+```
+
+
+## **Density Plot of CD8+ T cell clusters (Figure 2E)**
+Visualize CD8+ T cell states from sgScramble to sg*Arid1a* tumors using [scDataViz](https://www.bioconductor.org/packages/release/bioc/vignettes/scDataviz/inst/doc/scDataviz.html) package.
+```{r}
+#subset Seurat object by treatment for density plot
+sgScr.int=subset(x=dat.integrated,subset=Treatment=="sgScramble")
+sgArid1a.int=subset(x=dat.integrated,subset=Treatment=="sgArid1a")
+
+#save sce object for sgScr
+sgScr_sce <- as.SingleCellExperiment(sgScr.int) 
+#colData function from Scater single cell package
+metadata(sgScr_sce) <- data.frame(colData(sgScr_sce))
+
+#save sce object for sgArid1a
+sgArid1a_sce <- as.SingleCellExperiment(sgArid1a.int) 
+#colData function from Scater single cell package
+metadata(sgArid1a_sce) <- data.frame(colData(sgArid1a_sce))
+
+#save plot for sgScr
+#contourPlot() function from scDataviz package
+sgScramble <- contourPlot(sgScr_sce, contour=NA, reducedDim = 'UMAP',dimColnames = c('UMAP_1','UMAP_2'), title = "sgScramble") + 
+  scale_fill_viridis_c(option="magma") +
+  theme_classic() #creates cell density plot split by treatment
+
+#save plot for sgArid1a
+#contourPlot() function from scDataviz package
+sgArid1a <- contourPlot(sgArid1a_sce, contour=NA, reducedDim = 'UMAP',dimColnames = c('UMAP_1','UMAP_2'), title = "sgArid1a") + 
+  scale_fill_viridis_c(option="magma") + 
+   theme_classic() #creates cell density plot split by treatment
+
+#Run plot_grid() function from cowplot package
+#Plot density UMAPs on same plane
+plot_grid(sgScramble,sgArid1a)
+```
+
+
+## **CD8+ T cell cluster proportion quantification (Figure 2F)**
+Visualize cluster populations among all CD8+ T cells within each group. Data wrangling with [dplyr](https://dplyr.tidyverse.org/) and plotting with [ggplot2](https://ggplot2.tidyverse.org/).
+```{r}
+#Extract cluster, genotype, and cell number from Seurat object
+clusts=table(dat.integrated@active.ident,dat.integrated@meta.data$Treatment)
+clusts=as.data.frame(clusts)
+
+#Reshape dataframe and create proportion column using dplyr package
+clusts <- clusts %>%
+  rename(Cluster = Var1, Genotype = Var2) %>%
+  group_by(Genotype) %>%
+  mutate(prop = Freq/sum(Freq))
+
+#Make Genotype a factor and set desired order for plotting
+clusts$Genotype <- as.factor(clusts$Genotype)
+clusts$Genotype <- factor(clusts$Genotype, levels = c("sgScramble", "sgArid1a"))
+
+#color blind friendly palette
+mypalette <- friendly_pal("nickel_five")
+
+#barplot
+ggplot(clusts,aes(x=Genotype,y=prop,fill=Cluster))+
+  geom_bar(stat="identity", color="black")+
+  theme_classic()+ scale_fill_manual(values=mypalette) + 
+  ggtitle(substitute(paste(bold("Cluster Density")))) + 
+  theme(plot.title = element_text(size = 18, hjust = 0.5),
+        axis.text.x = element_text(size = 14),
+        axis.title = element_blank(),
+        axis.title.y = element_text(size = 14)) +
+  labs(y = "Proportion of UMAP")
+
+```
+
+
+## **Anti-PD1 Response Gene Signature (Figure 2G)**
+Visualize expression of a previously defined CD8+ T cell specific anti-PD1 response signature [Kumar et al](https://onlinelibrary.wiley.com/doi/10.1002/ijc.34218) in T cells from both sgScramble and sg*Arid1a* tumors.
+```{r}
+#Read in gene signatures from Maxwell et al
+gene_signatures <- read.delim("Maxwell_et_al_Gene_signatures.txt", header = TRUE)
+
+#Select gene signature from Kumar et al
+anti_PD1_response <- gene_signatures %>%
+  select("CD8_anti_PD1_response_sig")
+
+#Convert from dataframe to vector
+anti_PD1_response <- as.vector(anti_PD1_response)
+
+#AddModuleScore function from Seurat to add a custom gene signature to object
+dat.integrated <- AddModuleScore(object = dat.integrated, features = anti_PD1_response, ctrl = 5, name = "Anti_PD1_Response", seed = 12)
+
+#Visualize expression of custom gene signature 
+FeaturePlot(dat.integrated,features = "Anti_PD1_Response1",label=FALSE,split.by = "Treatment",order=TRUE, pt.size = .75) & theme(legend.position="right",text=element_text(size=10)) & scale_color_viridis_c(option="magma", limits=c(0.5, 1.1),oob=scales::squish)
+
+```
+
+
+## **Cluster 2 GSEA Enrichments (Figure 2H)**
+Perform differential gene expression (DGE) followed by GSEA comparing sgScramble to sgArid1a for all five clusters. DGE is performed using Seurat FindMarkers function and GSEA is performed using [WebGestaltR](https://bzhanglab.github.io/WebGestaltR/reference/swGsea.html) package.
+```{r}
+#Add a "cluster_treatment" vector to object metadata (e.g., Naive_sgArid1a or Naive_sgScramble)
+dat.integrated@meta.data$cluster_treatment <- paste(as.vector(dat.integrated$cell.type), as.vector(dat.integrated$Treatment), sep = "_")
+table(dat.integrated$cluster_treatment)
+#Make cluster_treatment object ident 
+Idents(dat.integrated) <- dat.integrated$cluster_treatment
+table(Idents(dat.integrated))
+
+##########
+#part1: DE analysis with Seurat FindMarkers function
+# outputs: .csv files for DE analysis
+
+#set seed for reproducible analysis
+set.seed(12345)
+#cluster names vector
+name <- as.vector(unique(dat.integrated$cell.type))
+#cluster_genotype vectors
+sgScramble <- paste0(name, "_sgScramble")
+sgArid1a <- paste0(name, "_sgArid1a")
+
+#DGE analysis
+for (i in 1:length(name)){
+  outname <- paste0("response_", name[i], ".csv")
+  temp <- FindMarkers(dat.integrated, ident.1 = sgArid1a[i], ident.2 = sgScramble[i], logfc.threshold = 0, min.pct = 0.05)
+  write.csv(temp, outname, quote=F)
+}
+
+##########
+#part2: generate GSEA input file - ranked gene list with scores
+# outputs: /GSEA/*.rnk files for GSEA
+##########
+#gene rank
+
+#DGE .csv files for each cluster
+csv <- list.files(pattern="*.csv")
+
+#Generate rank list for GSEA
+for(i in 1:length(csv)){
+  # Extract the base file name without the extension and add the new extension
+  base_name <- gsub(pattern="\\.csv$", replacement="", x=csv[i])
+  rank <- paste0("./GSEA/", base_name, ".rnk") # Construct the output path correctly
+  
+  # Read the CSV file
+  deg <- read.csv(csv[i], header=TRUE)
+  
+  # Calculate the rank score
+  rank.score <- -log10(deg$p_val_adj)*sign(deg$avg_log2FC)
+  
+  # Handle infinite and NA values
+  rank.score[is.na(rank.score)] <- 0
+  rank.score[rank.score == Inf] <- max(rank.score[which(rank.score < Inf)])+50
+  rank.score[rank.score == -Inf] <- min(rank.score[which(rank.score > -Inf)])-50
+  
+  # Check for NA and infinite values before proceeding
+  if(!any(is.na(rank.score)) && !any(is.infinite(rank.score))){
+    deg <- cbind(deg$X, rank.score)
+    write.table(deg, rank, quote=FALSE, row.names = FALSE, col.names = FALSE, sep="\t")
+  }
+}
+
+
+fnms <- list.files(pattern="*.csv")
+
+for(i in 1:length(fnms)){
+  # Extract the base file name without the extension and add the new extension
+  base_name <- gsub(pattern="\\.csv$", replacement="", x=fnms[i])
+  onms <- paste0("./GSEA/", base_name, ".rnk") # Construct the output path correctly
+  
+  # Read the CSV file
+  deg <- read.csv(fnms[i], header=TRUE)
+  
+  # Calculate the rank score
+  rank.score <- -log10(deg$p_val_adj)*sign(deg$avg_log2FC)
+  
+  # Handle infinite and NA values
+  rank.score[is.na(rank.score)] <- 0
+  rank.score[rank.score == Inf] <- max(rank.score[which(rank.score < Inf)])+50
+  rank.score[rank.score == -Inf] <- min(rank.score[which(rank.score > -Inf)])-50
+  
+  # Check for NA and infinite values before proceeding
+  if(!any(is.na(rank.score)) && !any(is.infinite(rank.score))){
+    deg <- cbind(deg$X, rank.score)
+    write.table(deg, onms, quote=FALSE, row.names = FALSE, col.names = FALSE, sep="\t")
+  }
+}
+
+#########
+# part3: perform GSEA with WebGestaltR
+#########
+
+outdir <- "./GSEA/hallmark/"
+
+runEnrich <- function(rankGene, outfnm, outdir) {
+  fdr <- 1
+  enrichTestGSEA <- WebGestaltR(enrichMethod = "GSEA",
+                                organism="mmusculus", 
+                                #enrichDatabaseFile="./GSEA/hallmark_mouse.gmt",
+                                enrichDatabaseFile="./GSEA/hallmark_mouse.gmt", #change gmt file
+                                enrichDatabaseType="genesymbol",
+                                interestGene = rankGene,
+                                interestGeneType = "genesymbol",
+                                referenceSet="genome",
+                                minNum=3,maxNum=2000,
+                                perNum=10000,
+                                fdrMethod="BH", sigMethod="top", 
+                                topThr = 51, reportNum = 51,
+                                isOutput=T,
+                                outputDirectory=outdir,
+                                projectName=outfnm,
+                                saveRawGseaResult=T,
+                                nThreads=20)
+  
+}
+
+csv <- list.files("./GSEA/", pattern="*.rnk")
+for (i in 1:length(csv)){
+  tmn <- paste0("./GSEA/", csv[i])
+  rankGene <- read.delim(tmn, header=F)
+  outfnm <- strsplit(tmn, "response_|.rnk")[[1]][2]
+  runEnrich(rankGene, outfnm, outdir)
+} 
+#end.
+```
+
+
+The CD8+ T cell immunotherapy response signature indicated the highest expression is in C2 effector like CD8+ T cells and this is increased in sg*Arid1a* tumor group. To investigate what gene signatures are enriched in sgArid1a C2 T cells vs sgScrmable C2 T cells, we pulled data from GSEA results for C2 Effector like cluster and plot enriched gene sets with ggplot2. 
+```{r}
+rawGseaResult <- readRDS("./GSEA/hallmark/Project_Effector/Project_Effector_GSEA/rawGseaResult.rds")
+
+
+Gene_set <- names(rawGseaResult$Items_in_Set)
+#replace underscores with spaces
+Gene_set <- gsub("_", " ", Gene_set) 
+#Capitalize only first letter of each word, stringr package
+Gene_set <- str_to_title(Gene_set)
+#delete hallmark text, too reduant for later plotting
+Gene_set <- gsub("Hallmark ", "", Gene_set)
+
+NES <- rawGseaResult$Enrichment_Results$NES
+FDR <- rawGseaResult$Enrichment_Results$fdr
+
+#make gsea_df for plotting
+C2_gsea_df <- data.frame(Gene_set, NES, FDR)
+
+#Take top and bottom 4 gene sets, dplyr package
+C2_top4 <- C2_gsea_df %>% 
+  arrange(NES) %>%
+  slice_head(n=4)
+C2_bottom4 <- C2_gsea_df %>%
+  arrange(NES) %>%
+  slice_tail(n=4)
+
+#join the top enrichments for sgArid1a and sgScr C2 T cells
+C2_top_df <- rbind(C2_top4, C2_bottom4)
+
+#GSEA vertical bars (log10pvalue scale, y=gene set, x=NES) #ggplot2 and forcats packages
+ggplot(C2_top_df, aes(NES, fct_reorder(Gene_set, NES), fill=FDR)) + geom_col() + 
+         scale_fill_gradientn(colors=c("#8b0000","#FEFEBE","#9FE2BF","slateblue"))+theme_classic()+theme(panel.border = element_rect(color="black",fill=NA,size=1.5))+ggtitle("GSEA")+labs(fill="FDR")+geom_vline(xintercept = c(0),size=1) +
+  theme(axis.title.y = element_blank(),
+        axis.title.x = element_text(size = 14),
+        plot.title = element_text(size = 18, face = "bold")) +
+  labs(title = "C2 Effector-like \nGSEA", 
+       x = "NES \n(sgArid1a/sgScramble)") 
+
+```
+
+
+## **CD8+ T cell ISG Metagene (Figure 2I)**
+Since IFN responses are prominently enriched in C2 effector like T cells, we created an interferon stimulated gene (ISG) metagene from leading edge genes in IFN Alpha/Gamma response signatures enriched in any of the five clusters from sg*Arid1a* tumors to visualize this ISG signature in CD8+ T cells. 
+```{r}
+#Select CD8+ T cell metagene signature
+CD8_ISG_score <- gene_signatures %>%
+  select("CD8_ISG_Metagene")
+
+#Convert from dataframe to vector
+CD8_ISG_score <- as.vector(CD8_ISG_score)
+
+#AddModuleScore function from Seurat to add a custom gene signature to object
+dat.integrated <- AddModuleScore(object = dat.integrated, features = CD8_ISG_score, ctrl = 5, name = "ISG_Metagene", seed = 12)
+
+#Visualize expression of custom gene signature 
+FeaturePlot(dat.integrated,features = "ISG_Metagene1",label=FALSE,split.by = "Treatment",order=TRUE, pt.size = .75) & theme(legend.position="right",text=element_text(size=10)) & scale_color_viridis_c(option="magma", limits=c(0, 1), oob=scales::squish)
+```
+
+
+## **TCR clonotype UMAP (Figure 2J)**
+To further understand the T cell response in sgArid1a tumors, we investigated the clonal expansion of T cells via 10X VDJ kit for TCR-sequencing. This was primarily via the [scRepertoire](https://github.com/ncborcherding/scRepertoire) package. 
+```{r}
+#Read in VDJ filtered annotation files from 10X's CellRanger
+sgArid1a_1=read.csv("./TCR_files/sgArid1a_1_filtered_contig_annotations.csv") 
+sgArid1a_2=read.csv("./TCR_files/sgArid1a_2_filtered_contig_annotations.csv")
+sgScr_1=read.csv("./TCR_files/sgScr_1_filtered_contig_annotations.csv")
+sgScr_2=read.csv("./TCR_files/sgScr_2_filtered_contig_annotations.csv")
+
+#Make list of TCR samples
+contig_list=list(sgArid1a_1,sgArid1a_2,sgScr_1,sgScr_2)
+
+#scRepertoire command to make object
+combinedTCR=combineTCR(contig_list,samples=c("sgArid1a","sgArid1a","sgScr","sgScr"),ID=c("1","2","1","2"))
+
+#Integrate TCR data with Seurat object
+dat.integrated = combineExpression(combinedTCR,dat.integrated, cloneCall="gene", proportion = FALSE, cloneSize = c(Single=1,Small=5,Medium=20,Large=100,Hyperexpanded=500))
+
+#Make new metadata feature for CloneType TCR expansion categories in Seurat object
+slot(dat.integrated,"meta.data")$cloneType=factor(slot(dat.integrated,"meta.data")$cloneType, levels=c("Hyperexpanded (100 < X <= 500)","Large (20 < X <= 100)","Medium (5 < X <= 20)","Small (1 < X <= 5)","Single (0 < X <= 1)", "No TCR mapped"))
+
+# Define custom color palette
+custom_colors <- c("Hyperexpanded (100 < X <= 500)" = "#FF0000",
+                   "Large (20 < X <= 100)" = "#FF7F00",
+                   "Medium (5 < X <= 20)" = "#80A440",
+                   "Small (1 < X <= 5)" = "#4A9BFF",
+                   "Single (0 < X <= 1)" = "#AAEEFF",
+                   "No TCR mapped" = "grey50" )
+
+
+#Make sure any NA value is populated with "No TCR mapped"
+dat.integrated@meta.data$cloneType[is.na(dat.integrated@meta.data$cloneType)] <- "No TCR mapped"
+
+
+#DimPlot for CloneType 
+DimPlot(dat.integrated, group.by = "cloneType", split.by = "Treatment", pt.size = 0.2,
+        cols = custom_colors, order = c("Hyperexpanded (100 < X <= 500)",
+                                                        "Large (20 < X <= 100)",
+                                                        "Medium (5 < X <= 20)",
+                                                        "Small (1 < X <= 5)",
+                                                        "Single (0 < X <= 1)",
+                                                        "No TCR mapped"))
+
+```
+
+
+
+## **TCR clonotype classes quantification (Figure 2J)**
+Visualizing the classes of clonotype expansion in each tumor genotype. Note: The TCR clonotype barchart groups are defined by a proportion of total TCR in their respective groups which are equal to the integer values seen on the TCR UMAP above. 
+```{r}
+sgArid1a_combine <- rbind(sgArid1a_1, sgArid1a_2)
+sgScr_combine <- rbind(sgScr_1, sgScr_2)
+
+#sgArid1a_comb=rbind(sgArid1a_1,sgArid1a_2)
+contig_list=list(sgScr_combine, sgArid1a_combine)
+
+#scRepetoire
+combinedTCR=combineTCR(contig_list,samples=c("sgScr", "sgArid1a"))
+
+mypalette2 <- rev(c("#FF0000", "#FF7F00", "#80A440", "#4A9BFF", "#AAEEFF"))
+
+#scRepertoire function
+clonalHomeostasis(combinedTCR, cloneSize = c(Single = 1e-04, Small = 0.0003, Medium = 0.0012, Large = 0.006, Hyperexpanded= 0.3),cloneCall = "gene",chain="both", )+scale_fill_manual(values=mypalette2) +theme(axis.title.x = element_blank())
+
+```
+
+
+## **TCR clonal scatterplot (Figure 2K)**
+Visualizing expansion of individual TCRs in each tumor genotype and whether they are expanded in both genotypes (dual expanded) or unique between genotypes. Colors for this figure were edited in illustrator. Interestingly, the top TCR in sg*Arid1a* tumors is shared in sgScramble tumors, but at low frequency in sgScramble tumor group. This suggests increased antigen presentation of a common antigen such as a B16F10 tumor antigen (most likely), but could conceivably be reactive to other types of antigens such as an auto-antigen. 
+```{r}
+
+
+#clonotype scatter plot
+clonalScatter(combinedTCR,cloneCall="gene",y.axis="sgArid1a",x.axis="sgScr",dot.size="total",graph="proportion", palette = "Berlin") #exportTable=TRUE exports data to table
+
+```
+
+
+## **Session Info**
+For reproducibility, my session info is listed below outlining the version of R and package versions that I’ve using for this vignette. 
+```{r}
+print(sessionInfo())
+```
+
